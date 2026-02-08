@@ -55,6 +55,11 @@ class PreferencesManager(context: Context) {
     fun saveSubtitlesVisible(visible: Boolean) {
         prefs.edit().putBoolean("subtitles_visible", visible).apply()
     }
+
+    fun setSubtitlesVisible(visible: Boolean) {
+        saveSubtitlesVisible(visible)
+    }
+
     fun isSubtitlesVisible(): Boolean = prefs.getBoolean("subtitles_visible", true)
 
     fun saveSearchLanguage(lang: String) {
@@ -66,4 +71,14 @@ class PreferencesManager(context: Context) {
         prefs.edit().putString("trans_source", source).apply()
     }
     fun getTranslationSource(): String = prefs.getString("trans_source", "MLKIT") ?: "MLKIT"
+
+    fun saveSourceLanguage(lang: String) {
+        prefs.edit().putString("source_lang", lang).apply()
+    }
+    fun getSourceLanguage(): String = prefs.getString("source_lang", "en") ?: "en"
+
+    fun saveTargetLanguage(lang: String) {
+        prefs.edit().putString("target_lang", lang).apply()
+    }
+    fun getTargetLanguage(): String = prefs.getString("target_lang", "ro") ?: "ro"
 }

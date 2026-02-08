@@ -39,6 +39,7 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|layoutDirection"
             android:theme="@style/Theme.OxigenPlayer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

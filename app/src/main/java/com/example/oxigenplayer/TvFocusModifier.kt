@@ -20,24 +20,19 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-/**
- * Modifier principal pentru suport TV.
- * Creează un efect vizual modern și elegant prin scalare subtilă,
- * bordură albă și un overlay discret.
- */
 fun Modifier.tvFocusable(
     focusRequester: FocusRequester? = null,
     isCircle: Boolean = false,
     interactionSource: MutableInteractionSource? = null,
-    isSelected: Boolean = false // Păstrăm parametrul dar îl folosim doar pentru stilizare internă
+    isSelected: Boolean = false
 ): Modifier = composed {
     val actualInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     val isFocused by actualInteractionSource.collectIsFocusedAsState()
     
-    // Scalare subtilă pentru feedback vizual (10% mărire la focus)
+    // Am revenit la `tween` pentru a asigura performanță maximă și a elimina sacadarea.
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.1f else 1.0f,
-        animationSpec = tween(durationMillis = 200),
+        animationSpec = tween(durationMillis = 100), // Animație rapidă și eficientă
         label = "FocusScale"
     )
 
@@ -53,7 +48,6 @@ fun Modifier.tvFocusable(
                     .background(Color.White.copy(alpha = 0.2f), shape)
                     .border(2.dp, Color.White, shape)
             } else if (isSelected) {
-                // Dacă este selectat dar NU are focus, punem o bordură mai discretă sau un fundal
                 Modifier
                     .background(Color.White.copy(alpha = 0.1f), shape)
                     .border(1.dp, Color.White.copy(alpha = 0.5f), shape)

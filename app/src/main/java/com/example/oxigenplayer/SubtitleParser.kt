@@ -49,29 +49,20 @@ class SubtitleParser {
         return (hours * 3600000L) + (minutes * 60000L) + (seconds * 1000L) + milliseconds
     }
 
-    /**
-     * Optimizat cu Binary Search pentru viteză ultra-rapidă pe Android TV
-     */
-    fun getCurrentSubtitle(subtitles: List<SubtitleEntry>, currentPositionMs: Long): String? {
+    fun getCurrentSubtitleEntry(subtitles: List<SubtitleEntry>, currentPositionMs: Long): SubtitleEntry? {
         if (subtitles.isEmpty()) return null
-        
         var low = 0
         var high = subtitles.size - 1
-        
         while (low <= high) {
             val mid = (low + high) / 2
             val entry = subtitles[mid]
-            
-            if (currentPositionMs >= entry.startTime && currentPositionMs <= entry.endTime) {
-                return entry.text
-            }
-            
-            if (currentPositionMs < entry.startTime) {
-                high = mid - 1
-            } else {
-                low = mid + 1
-            }
+            if (currentPositionMs >= entry.startTime && currentPositionMs <= entry.endTime) return entry
+            if (currentPositionMs < entry.startTime) high = mid - 1 else low = mid + 1
         }
         return null
+    }
+
+    fun getCurrentSubtitle(subtitles: List<SubtitleEntry>, currentPositionMs: Long): String? {
+        return getCurrentSubtitleEntry(subtitles, currentPositionMs)?.text
     }
 }

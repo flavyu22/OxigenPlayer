@@ -20,7 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -69,6 +71,7 @@ fun MainSettingsDialog(
                         CategoryButton(OxigenStrings.get(currentAppLang, "translation_label"), Icons.Default.Translate) { activeCategory = "translation" }
                         CategoryButton(OxigenStrings.get(currentAppLang, "style_label"), Icons.Default.ColorLens) { activeCategory = "style" }
                         CategoryButton(OxigenStrings.get(currentAppLang, "language_label"), Icons.Default.Language) { activeCategory = "lang" }
+                        CategoryButton(if (currentAppLang == "ro") "Cont OpenSubtitles" else "OpenSubtitles Account", Icons.Default.AccountCircle) { activeCategory = "account" }
 
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(onClick = onShowAbout, modifier = Modifier.fillMaxWidth().tvFocusable()) { Text(OxigenStrings.get(currentAppLang, "about_dev_btn")) }
@@ -84,7 +87,7 @@ fun MainSettingsDialog(
                             translationSource = translationSource,
                             onSourceChange = onSourceChange,
                             sourceLang = sourceLang,
-                            onSourceLangChange = sourceLang, // Nu e folosit aici direct, dar pentru consistenta
+                            onSourceLangChange = sourceLang,
                             sourceLangReal = sourceLang,
                             onSourceLangChangeReal = onSourceLangChange,
                             targetLang = targetLang,
@@ -111,9 +114,69 @@ fun MainSettingsDialog(
                             currentAppLang = currentAppLang,
                             onAppLanguageChange = onAppLanguageChange
                         )
+                        "account" -> AccountSettingsContent(
+                            onBack = { activeCategory = null },
+                            currentAppLang = currentAppLang
+                        )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AccountSettingsContent(onBack: () -> Unit, currentAppLang: String) {
+    val context = LocalContext.current
+    val prefs = remember { PreferencesManager(context) }
+    var username by remember { mutableStateOf(prefs.getUsername()) }
+    var password by remember { mutableStateOf(prefs.getPassword()) }
+    var showPassword by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.tvFocusable(isCircle = true)) { Icon(Icons.Default.ArrowBack, null) }
+            Text(if (currentAppLang == "ro") "Cont OpenSubtitles" else "OpenSubtitles Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Username") },
+            modifier = Modifier.fillMaxWidth().tvFocusable(),
+            singleLine = true
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            modifier = Modifier.fillMaxWidth().tvFocusable(),
+            singleLine = true,
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showPassword = !showPassword }) {
+                    Icon(if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                prefs.saveLogin(username, password)
+                // Resetam token-ul pentru a forta o noua logare cu noile date
+                prefs.saveToken("")
+                onBack()
+            },
+            modifier = Modifier.fillMaxWidth().tvFocusable()
+        ) {
+            Text(if (currentAppLang == "ro") "Salvează" else "Save")
         }
     }
 }
@@ -140,8 +203,8 @@ fun TranslationSettingsContent(
     onTranslationToggle: (Boolean) -> Unit,
     translationSource: TranslationSource,
     onSourceChange: (TranslationSource) -> Unit,
-    sourceLang: String, // Deprecated, use Real version
-    onSourceLangChange: String, // Deprecated
+    sourceLang: String,
+    onSourceLangChange: String,
     sourceLangReal: String,
     onSourceLangChangeReal: (String) -> Unit,
     targetLang: String,
@@ -176,7 +239,7 @@ fun TranslationSettingsContent(
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onSourceChange(TranslationSource.MY_MEMORY) }, colors = ButtonDefaults.buttonColors(containerColor = if (translationSource == TranslationSource.MY_MEMORY) MaterialTheme.colorScheme.primary else Color.Gray), modifier = Modifier.weight(1f).tvFocusable(isSelected = translationSource == TranslationSource.MY_MEMORY)) { Text("MyMemory") }
-                Button(onClick = { onSourceChange(TranslationSource.LINGVA) }, colors = ButtonDefaults.buttonColors(containerColor = if (translationSource == TranslationSource.LINGVA) MaterialTheme.colorScheme.primary else Color.Gray), modifier = Modifier.weight(1f).tvFocusable(isSelected = translationSource == TranslationSource.LINGVA)) { Text("Lingva") }
+                Button(onClick = { onSourceChange(TranslationSource.LIBRE_TRANSLATE) }, colors = ButtonDefaults.buttonColors(containerColor = if (translationSource == TranslationSource.LIBRE_TRANSLATE) MaterialTheme.colorScheme.primary else Color.Gray), modifier = Modifier.weight(1f).tvFocusable(isSelected = translationSource == TranslationSource.LIBRE_TRANSLATE)) { Text("Libre") }
             }
         }
         

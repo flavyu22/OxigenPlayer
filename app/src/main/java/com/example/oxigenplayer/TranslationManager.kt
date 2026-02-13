@@ -20,7 +20,7 @@ enum class TranslationSource {
     MLKIT,
     MY_MEMORY,
     GOOGLE_TRANSLATE,
-    LINGVA
+    LIBRE_TRANSLATE
 }
 
 class TranslationManager {
@@ -118,7 +118,7 @@ class TranslationManager {
                         }
                         TranslationSource.MY_MEMORY -> translateWithMyMemory(text)
                         TranslationSource.GOOGLE_TRANSLATE -> translateWithGoogle(text)
-                        TranslationSource.LINGVA -> translateWithLingva(text)
+                        TranslationSource.LIBRE_TRANSLATE -> translateWithLibreTranslate(text)
                     }
                     if (!result.isNullOrBlank()) {
                         translationCache.put(cacheKey, result)
@@ -193,18 +193,34 @@ class TranslationManager {
         } catch (e: Exception) { text }
     }
 
-    private fun translateWithLingva(text: String): String {
+    private fun translateWithLibreTranslate(text: String): String {
         return try {
             val encodedText = URLEncoder.encode(text, "UTF-8")
-            val url = URL("https://lingva.ml/api/v1/$sourceLanguage/$targetLanguage/$encodedText")
+            // Folosim o instanță publică de LibreTranslate. Notă: instanțele publice pot fi instabile.
+            val url = URL("https://libretranslate.de/translate")
             val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 2000
-            conn.readTimeout = 2000
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            
+            val jsonInput = JSONObject().apply {
+                put("q", text)
+                put("source", sourceLanguage)
+                put("target", targetLanguage)
+                put("format", "text")
+            }
+            
+            conn.outputStream.use { it.write(jsonInput.toString().toByteArray()) }
+            
             if (conn.responseCode == 200) {
                 val response = conn.inputStream.bufferedReader().use { it.readText() }
-                JSONObject(response).getString("translation")
-            } else text
-        } catch (e: Exception) { text }
+                JSONObject(response).getString("translatedText")
+            } else {
+                translateWithGoogle(text)
+            }
+        } catch (e: Exception) { 
+            translateWithGoogle(text)
+        }
     }
 
     fun getAvailableLanguages(): List<String> = TranslateLanguage.getAllLanguages()

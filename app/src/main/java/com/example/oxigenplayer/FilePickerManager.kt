@@ -52,10 +52,7 @@ class FilePickerManager {
         return try {
             val fileName = "${movieName.replace(Regex("[^a-zA-Z0-9]"), "_")}_translated.srt"
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val oxigenDir = File(downloadsDir, "OxigenSubtitles")
-            if (!oxigenDir.exists()) oxigenDir.mkdirs()
-            
-            val file = File(oxigenDir, fileName)
+            val file = File(downloadsDir, fileName)
             
             val content = StringBuilder()
             subtitles.forEach { entry ->

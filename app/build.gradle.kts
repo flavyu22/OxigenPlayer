@@ -53,7 +53,7 @@ dependencies {
     
     // ML Kit Translation & Language ID
     implementation(libs.mlkit.translate)
-    implementation(libs.mlkit.language.id)
+    implementation("com.google.mlkit:language-id:17.0.6")
     implementation(libs.kotlinx.coroutines.play.services)
 
     testImplementation(libs.junit)

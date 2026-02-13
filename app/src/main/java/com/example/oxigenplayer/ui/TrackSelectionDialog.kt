@@ -27,12 +27,7 @@ import com.example.oxigenplayer.tvFocusable
 
 @OptIn(UnstableApi::class)
 @Composable
-fun TrackSelectionDialog(
-    player: ExoPlayer, 
-    onDismiss: () -> Unit, 
-    currentAppLang: String,
-    onTextTrackSelected: () -> Unit = {}
-) {
+fun TrackSelectionDialog(player: ExoPlayer, onDismiss: () -> Unit, currentAppLang: String) {
     val tracks = player.currentTracks
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -78,9 +73,6 @@ fun TrackSelectionDialog(
                                                     )
                                                 )
                                                 .build()
-                                            if (group.type == C.TRACK_TYPE_TEXT) {
-                                                onTextTrackSelected()
-                                            }
                                             onDismiss()
                                         }
                                         .tvFocusable()

@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -17,6 +16,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -53,16 +53,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.text.Cue
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import com.example.oxigenplayer.ui.FileExplorerDialog
 import com.example.oxigenplayer.ui.MainSettingsDialog
 import com.example.oxigenplayer.ui.SubtitleSearchDialog
 import com.example.oxigenplayer.ui.TrackSelectionDialog
-import com.example.oxigenplayer.ui.UpdateDialog
 import com.example.oxigenplayer.ui.theme.OxigenPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,7 +86,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         handleIntent(intent)
         setContent {
             OxigenPlayerTheme {
@@ -138,17 +134,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Închide aplicația instantaneu când utilizatorul apasă HOME sau iese din ea
-    override fun onStop() {
-        super.onStop()
-        exoPlayer?.release()
-        exoPlayer = null
-        finish()
-    }
-
     override fun onDestroy() {
         super.onDestroy()
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         exoPlayer?.release()
         exoPlayer = null
     }
@@ -160,16 +147,15 @@ class MainActivity : ComponentActivity() {
 fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPlayer) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    
     val translationManager = remember { TranslationManager() }
     val filePickerManager = remember { FilePickerManager() }
     val subtitleSearchService = remember { SubtitleSearchService() }
-    val updateManager = remember { UpdateManager(context) }
     val prefs = remember { PreferencesManager(context) }
-    val appLang = remember { prefs.getAppLanguage() }
+    val appLang = prefs.getAppLanguage()
     
     var originalSubtitle by remember { mutableStateOf("") }
     var translatedSubtitle by remember { mutableStateOf("") }
+    var isModelDownloaded by remember { mutableStateOf(false) }
     
     var isTranslationEnabled by remember { mutableStateOf(true) }
     var translationSource by remember { mutableStateOf(TranslationSource.valueOf(prefs.getTranslationSource())) }
@@ -179,17 +165,17 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
     var showFileExplorer by remember { mutableStateOf(false) }
     var showMediaExplorer by remember { mutableStateOf(false) }
     var showAboutDeveloper by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     
     var subtitlesVisible by remember { mutableStateOf(prefs.isSubtitlesVisible()) }
     
+    // Subtitle Customization States
     var subtitleFontSize by remember { mutableFloatStateOf(prefs.getSubtitleFontSize()) }
     var subtitleColor by remember { mutableStateOf(Color(prefs.getSubtitleColor())) }
     var subtitleBgColor by remember { mutableStateOf(Color(prefs.getSubtitleBackgroundColor())) }
     
     var sourceLang by remember { mutableStateOf("en") }
     var targetLang by remember { mutableStateOf(translationManager.getTargetLanguage()) }
-    val currentVideoUri by initialVideoUri
+    val currentVideoUri by remember { initialVideoUri }
     var externalSubtitles by remember { mutableStateOf<List<SubtitleEntry>>(emptyList()) }
     val translatedSubtitlesMap = remember { mutableStateMapOf<Int, SubtitleEntry>() }
     var useExternalSubtitles by remember { mutableStateOf(false) }
@@ -205,67 +191,18 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
     val firstButtonFocusRequester = remember { FocusRequester() }
     val rootFocusRequester = remember { FocusRequester() }
 
-    var exoPlayerInstance by remember { mutableStateOf<ExoPlayer?>(null) }
-    
-    LaunchedEffect(Unit) {
-        scope.launch {
-            val info = updateManager.checkForUpdate()
-            if (info != null) {
-                updateInfo = info
-            }
+    val exoPlayer = remember {
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        ExoPlayer.Builder(context, renderersFactory).build().apply {
+            playWhenReady = true
+            videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
         }
-    }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.Main) {
-            val renderersFactory = DefaultRenderersFactory(context)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                .setEnableAudioTrackPlaybackParams(true)
-
-            val trackSelector = DefaultTrackSelector(context).apply {
-                parameters = buildUponParameters()
-                    .setTunnelingEnabled(true)
-                    .build()
-            }
-
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(30000, 60000, 2500, 5000)
-                .build()
-
-            val player = ExoPlayer.Builder(context, renderersFactory)
-                .setTrackSelector(trackSelector)
-                .setLoadControl(loadControl)
-                .build().apply {
-                    playWhenReady = true
-                    videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                }
-            exoPlayerInstance = player
-            onPlayerReady(player)
-        }
-    }
-
-    var hideControlsJob by remember { mutableStateOf<Job?>(null) }
-
-    val resetControlsTimer = {
-        showControls = true
-        showOnlySeekBar = false
-        hideControlsJob?.cancel()
-        if (isPlaying && !showSettings && !showTracks && !showSubtitleSearch && !showFileExplorer && !showMediaExplorer) {
-            hideControlsJob = scope.launch {
-                delay(5000)
-                showControls = false
-            }
-        }
-    }
-
-    LaunchedEffect(isPlaying, showSettings, showTracks, showSubtitleSearch, showFileExplorer, showMediaExplorer) {
-        resetControlsTimer()
     }
 
     var hideSeekBarJob by remember { mutableStateOf<Job?>(null) }
     val triggerOnlySeekBar = {
         showOnlySeekBar = true
-        showControls = false
         hideSeekBarJob?.cancel()
         hideSeekBarJob = scope.launch {
             delay(3000)
@@ -273,29 +210,36 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
         }
     }
 
-    LaunchedEffect(exoPlayerInstance, isPlaying) {
-        val player = exoPlayerInstance ?: return@LaunchedEffect
+    LaunchedEffect(exoPlayer) { onPlayerReady(exoPlayer) }
+
+    LaunchedEffect(exoPlayer, isPlaying) {
         while (true) {
-            currentPosition = player.currentPosition
-            duration = player.duration.coerceAtLeast(0L)
+            currentPosition = exoPlayer.currentPosition
+            duration = exoPlayer.duration.coerceAtLeast(0L)
             
             if (isPlaying && currentVideoUri != null) {
                 prefs.saveVideoPosition(currentVideoUri.toString(), currentPosition)
             }
-            delay(2000) 
+            delay(1000)
         }
     }
 
-    LaunchedEffect(currentVideoUri, exoPlayerInstance) {
-        val player = exoPlayerInstance ?: return@LaunchedEffect
+    LaunchedEffect(showControls, isPlaying, showSettings, showTracks, showSubtitleSearch, showFileExplorer, showMediaExplorer) {
+        if (showControls && isPlaying && !showSettings && !showTracks && !showSubtitleSearch && !showFileExplorer && !showMediaExplorer) {
+            delay(8000)
+            showControls = false
+        }
+    }
+
+    LaunchedEffect(currentVideoUri) {
         currentVideoUri?.let { uri ->
-            player.setMediaItem(MediaItem.fromUri(uri))
-            player.prepare()
+            exoPlayer.setMediaItem(MediaItem.fromUri(uri))
+            exoPlayer.prepare()
             
             val savedPos = prefs.getVideoPosition(uri.toString())
-            if (savedPos > 0) { player.seekTo(savedPos) }
+            if (savedPos > 0) { exoPlayer.seekTo(savedPos) }
             
-            player.play()
+            exoPlayer.play()
             
             val uriStr = uri.toString()
             if (uriStr.contains(".")) {
@@ -317,7 +261,7 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
 
     LaunchedEffect(showControls) {
         if (showControls) {
-            delay(100)
+            delay(200)
             try { firstButtonFocusRequester.requestFocus() } catch (e: Exception) {}
         } else {
             rootFocusRequester.requestFocus()
@@ -330,24 +274,28 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
             if (detected != null) {
                 sourceLang = detected
             }
+            if (translationSource == TranslationSource.MLKIT) {
+                isModelDownloaded = false
+                translationManager.downloadModelIfNeeded()
+                isModelDownloaded = true
+            }
         }
     }
 
-    LaunchedEffect(originalSubtitle, isTranslationEnabled, translationSource, targetLang) {
+    LaunchedEffect(originalSubtitle, isTranslationEnabled, isModelDownloaded, translationSource, targetLang) {
         translationManager.currentSource = translationSource
         translationManager.setTargetLanguage(targetLang)
         
-        val player = exoPlayerInstance ?: return@LaunchedEffect
-        val currentSubEntry = if (useExternalSubtitles) SubtitleParser().getCurrentSubtitleEntry(externalSubtitles, player.currentPosition) else null
+        val currentSubEntry = if (useExternalSubtitles) SubtitleParser().getCurrentSubtitleEntry(externalSubtitles, exoPlayer.currentPosition) else null
         val preTranslated = currentSubEntry?.let { translatedSubtitlesMap[it.index]?.text }
         
         if (preTranslated != null) {
             translatedSubtitle = preTranslated
         } else {
-            if (isTranslationEnabled && originalSubtitle.isNotEmpty()) {
-                if (translationSource == TranslationSource.MLKIT) {
-                   translationManager.downloadModelIfNeeded()
-                }
+            val needsModel = translationSource == TranslationSource.MLKIT
+            val canTranslate = if (needsModel) isModelDownloaded else true
+            
+            if (isTranslationEnabled && canTranslate && originalSubtitle.isNotEmpty()) {
                 translatedSubtitle = withContext(Dispatchers.IO) {
                     translationManager.translate(originalSubtitle)
                 }
@@ -357,9 +305,9 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
         }
     }
 
-    DisposableEffect(exoPlayerInstance) {
-        val player = exoPlayerInstance
+    DisposableEffect(Unit) {
         val listener = object : Player.Listener {
+            @Deprecated("Deprecated in Java")
             override fun onCues(cues: List<Cue>) {
                 if (!useExternalSubtitles) {
                     val text = cues.firstOrNull()?.text?.toString() ?: ""
@@ -368,23 +316,20 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
             }
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
         }
-        player?.addListener(listener)
+        exoPlayer.addListener(listener)
         onDispose { 
-            player?.let { p ->
-                currentVideoUri?.let { uri -> prefs.saveVideoPosition(uri.toString(), p.currentPosition) }
-                p.removeListener(listener)
-            }
+            currentVideoUri?.let { uri -> prefs.saveVideoPosition(uri.toString(), exoPlayer.currentPosition) }
+            exoPlayer.removeListener(listener) 
         }
     }
 
-    LaunchedEffect(useExternalSubtitles, externalSubtitles, exoPlayerInstance) {
-        val player = exoPlayerInstance ?: return@LaunchedEffect
+    LaunchedEffect(useExternalSubtitles, externalSubtitles) {
         if (useExternalSubtitles && externalSubtitles.isNotEmpty()) {
             while (coroutineContext.isActive && useExternalSubtitles) {
-                val pos = player.currentPosition
+                val pos = exoPlayer.currentPosition
                 val subText = SubtitleParser().getCurrentSubtitle(externalSubtitles, pos) ?: ""
                 if (subText != originalSubtitle) { originalSubtitle = subText }
-                delay(150)
+                delay(100)
             }
         }
     }
@@ -396,19 +341,16 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { keyEvent ->
-                val player = exoPlayerInstance ?: return@onPreviewKeyEvent false
                 if (keyEvent.type == KeyEventType.KeyDown) {
-                    resetControlsTimer()
-                    
                     if (!showControls) {
                         when (keyEvent.nativeKeyEvent.keyCode) {
                             KeyEvent.KEYCODE_DPAD_LEFT -> {
-                                player.seekTo((player.currentPosition - 10000).coerceAtLeast(0))
+                                exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0))
                                 triggerOnlySeekBar()
                                 return@onPreviewKeyEvent true
                             }
                             KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                player.seekTo((player.currentPosition + 10000).coerceAtMost(player.duration))
+                                exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration))
                                 triggerOnlySeekBar()
                                 return@onPreviewKeyEvent true
                             }
@@ -431,26 +373,25 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                         }
                     } else {
                         if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
-                            if (isPlaying) player.pause() else player.play()
+                            if (isPlaying) exoPlayer.pause() else exoPlayer.play()
                             return@onPreviewKeyEvent true
                         }
                     }
                 }
                 false
             }
-            .pointerInput(Unit) { detectTapGestures(onTap = { resetControlsTimer() }) }
+            .pointerInput(Unit) { detectTapGestures(onTap = { showControls = !showControls }) }
     ) {
         AndroidView(
             factory = {
                 PlayerView(context).apply {
-                    player = exoPlayerInstance
+                    player = exoPlayer
                     useController = false
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     subtitleView?.visibility = android.view.View.GONE
                     keepScreenOn = true
                 }
             },
-            update = { it.player = exoPlayerInstance },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -469,7 +410,6 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                         onClick = { 
                             subtitlesVisible = !subtitlesVisible
                             prefs.saveSubtitlesVisible(subtitlesVisible)
-                            resetControlsTimer()
                         },
                         isSelected = subtitlesVisible,
                         selectedColor = Color.Red.copy(0.7f),
@@ -502,10 +442,7 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                 }
 
                 IconButton(
-                    onClick = { 
-                        exoPlayerInstance?.let { if (isPlaying) it.pause() else it.play() }
-                        resetControlsTimer()
-                    },
+                    onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
                     modifier = Modifier
                         .align(Alignment.Center)
                         .size(90.dp)
@@ -537,10 +474,7 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                     
                     Slider(
                         value = if (duration > 0) currentPosition.toFloat() else 0f,
-                        onValueChange = { 
-                            exoPlayerInstance?.seekTo(it.toLong())
-                            resetControlsTimer()
-                        },
+                        onValueChange = { exoPlayer.seekTo(it.toLong()) },
                         valueRange = 0f..(duration.toFloat().coerceAtLeast(1f)),
                         interactionSource = interactionSource,
                         modifier = Modifier
@@ -565,12 +499,13 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(formatTime(currentPosition), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         Text(" / ", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp)
-                        Text(formatTime(duration), color = Color.White, fontSize = 14.sp)
+                        Text(formatTime(duration), color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
                     }
                 }
             }
         }
 
+        // Overlay Subtitrări cu Customization
         val subPadding by animateDpAsState(if (showControls) 140.dp else 60.dp, label = "")
         val displaySubtitle = if (subtitlesVisible) {
             if (isTranslationEnabled && translatedSubtitle.isNotEmpty()) translatedSubtitle else if (!isTranslationEnabled) originalSubtitle else ""
@@ -595,37 +530,33 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
         }
 
         if (showSettings) MainSettingsDialog(
-            onDismiss = { showSettings = false; resetControlsTimer() }, 
+            onDismiss = { showSettings = false }, 
             isTranslationEnabled = isTranslationEnabled, 
-            onTranslationToggle = { isTranslationEnabled = it; resetControlsTimer() }, 
+            onTranslationToggle = { isTranslationEnabled = it }, 
             translationSource = translationSource, 
             onSourceChange = { 
                 translationSource = it
                 prefs.saveTranslationSource(it.name)
-                resetControlsTimer()
             }, 
             subtitleFontSize = subtitleFontSize, 
             onFontSizeChange = { 
                 subtitleFontSize = it
                 prefs.saveSubtitleFontSize(it)
-                resetControlsTimer()
             }, 
             subtitleColor = subtitleColor, 
             onColorChange = {
                 subtitleColor = it
                 prefs.saveSubtitleColor(it.toArgb())
-                resetControlsTimer()
             },
             subtitleBgColor = subtitleBgColor, 
             onBgColorChange = {
                 subtitleBgColor = it
                 prefs.saveSubtitleBackgroundColor(it.toArgb())
-                resetControlsTimer()
             },
             sourceLang = sourceLang, 
-            onSourceLangChange = { sourceLang = it; resetControlsTimer() }, 
+            onSourceLangChange = { sourceLang = it }, 
             targetLang = targetLang, 
-            onTargetLangChange = { targetLang = it; resetControlsTimer() },
+            onTargetLangChange = { targetLang = it },
             availableLanguages = translationManager.getAvailableLanguages(),
             onAppLanguageChange = { lang ->
                 prefs.saveAppLanguage(lang)
@@ -644,6 +575,7 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                     }
                     isTranslatingAll = false
                     
+                    // Salvare automată după traducere completă
                     val movieName = currentVideoUri?.let { MovieNameExtractor.extractMovieNameWithYear(context, it) } ?: "Movie"
                     val allTranslated = externalSubtitles.map { entry -> 
                         translatedSubtitlesMap[entry.index] ?: entry 
@@ -654,39 +586,16 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                             Toast.makeText(context, "Saved & Applied: $path", Toast.LENGTH_LONG).show()
                             externalSubtitles = allTranslated
                             useExternalSubtitles = true
-                            translatedSubtitlesMap.clear()
-                            isTranslationEnabled = false
                         }
                     }
                 }
             }
         )
-        if (showTracks) exoPlayerInstance?.let {
-            TrackSelectionDialog(
-                it, 
-                onDismiss = { showTracks = false; resetControlsTimer() }, 
-                currentAppLang = appLang,
-                onTextTrackSelected = { useExternalSubtitles = false; resetControlsTimer() }
-            )
-        }
-        if (showSubtitleSearch) SubtitleSearchDialog(
-            onDismiss = { showSubtitleSearch = false; resetControlsTimer() }, 
-            onSubtitleSelected = { subs -> 
-                externalSubtitles = subs
-                useExternalSubtitles = true
-                showSubtitleSearch = false
-                translatedSubtitlesMap.clear()
-                resetControlsTimer()
-            }, 
-            subtitleSearchService = subtitleSearchService, 
-            scope = scope, 
-            context = context, 
-            currentVideoUri = currentVideoUri, 
-            prefs = prefs
-        )
+        if (showTracks) TrackSelectionDialog(exoPlayer, onDismiss = { showTracks = false }, currentAppLang = appLang)
+        if (showSubtitleSearch) SubtitleSearchDialog(onDismiss = { showSubtitleSearch = false }, { externalSubtitles = it; useExternalSubtitles = true; showSubtitleSearch = false }, subtitleSearchService, scope, context, currentVideoUri, prefs)
         
         if (showMediaExplorer) FileExplorerDialog(
-            onDismiss = { showMediaExplorer = false; resetControlsTimer() },
+            onDismiss = { showMediaExplorer = false },
             onFileSelected = { uri ->
                 if (uri.toString().endsWith(".srt", ignoreCase = true)) {
                     scope.launch(Dispatchers.IO) {
@@ -696,15 +605,12 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
                                 externalSubtitles = subs
                                 useExternalSubtitles = true
                                 showMediaExplorer = false
-                                translatedSubtitlesMap.clear()
-                                resetControlsTimer()
                             }
                         }
                     }
                 } else {
                     initialVideoUri.value = uri
                     showMediaExplorer = false
-                    resetControlsTimer()
                 }
             },
             title = OxigenStrings.get(appLang, "select_media"),
@@ -713,25 +619,12 @@ fun VideoPlayerScreen(initialVideoUri: MutableState<Uri?>, onPlayerReady: (ExoPl
 
         if (showAboutDeveloper) {
             AlertDialog(
-                onDismissRequest = { showAboutDeveloper = false; resetControlsTimer() },
+                onDismissRequest = { showAboutDeveloper = false },
                 title = { Text(OxigenStrings.get(appLang, "about_dev_title")) },
                 text = { Text(OxigenStrings.get(appLang, "about_dev_text")) },
                 confirmButton = {
-                    Button(onClick = { showAboutDeveloper = false; resetControlsTimer() }, modifier = Modifier.tvFocusable()) { Text(OxigenStrings.get(appLang, "done_btn")) }
+                    Button(onClick = { showAboutDeveloper = false }, modifier = Modifier.tvFocusable()) { Text(OxigenStrings.get(appLang, "done_btn")) }
                 }
-            )
-        }
-
-        updateInfo?.let { info ->
-            UpdateDialog(
-                updateInfo = info,
-                onUpdate = {
-                    scope.launch {
-                        updateManager.downloadAndInstall(info)
-                    }
-                    updateInfo = null
-                },
-                onDismiss = { updateInfo = null }
             )
         }
     }

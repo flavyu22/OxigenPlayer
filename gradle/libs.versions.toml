@@ -10,7 +10,6 @@ kotlin = "2.0.21"
 composeBom = "2024.09.00"
 media3 = "1.4.1"
 mlkitTranslate = "17.0.3"
-mlkitLanguageId = "17.0.6"
 kotlinxCoroutinesPlayServices = "1.10.2"
 
 [libraries]
@@ -33,7 +32,6 @@ androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplaye
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
-mlkit-language-id = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkitLanguageId" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutinesPlayServices" }
 
 [plugins]

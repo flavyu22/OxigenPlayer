@@ -34,8 +34,7 @@ fun FileExplorerDialog(
     onDismiss: () -> Unit,
     onFileSelected: (Uri) -> Unit,
     title: String = "Explorator Fișiere",
-    allowedExtensions: List<String> = listOf("srt"),
-    extraButton: @Composable (() -> Unit)? = null
+    allowedExtensions: List<String> = listOf("srt")
 ) {
     val storageRoot = Environment.getExternalStorageDirectory()
     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -152,11 +151,6 @@ fun FileExplorerDialog(
                             }
                         }
                     }
-                }
-
-                if (extraButton != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    extraButton()
                 }
 
                 Row(

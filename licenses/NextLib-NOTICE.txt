@@ -1,0 +1,9 @@
+NextLib
+Copyright its contributors
+Project: https://github.com/anilbeesetti/nextlib
+License: GNU General Public License version 3.0
+
+The optional OxigenPlayer `full` codec flavor links NextLib/FFmpeg software
+renderers into the application. Do not distribute a `full` artifact unless you
+comply with the GPLv3, including the corresponding-source and notice
+requirements. The default `platform` flavor does not include NextLib.

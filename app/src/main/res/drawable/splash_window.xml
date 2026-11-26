@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cold-start window background: brand gradient + centered Oxigen logo.
+     Shown while the activity inflates its first frame, giving an instant
+     branded splash with no extra dependency. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:startColor="#FF0E2A4D"
+                android:centerColor="#FF061028"
+                android:endColor="#FF04070E"
+                android:type="linear" />
+        </shape>
+    </item>
+    <item android:gravity="center">
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/oxigen_logo" />
+    </item>
+</layer-list>

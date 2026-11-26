@@ -1,0 +1,266 @@
+name: Android verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify repository policy, secrets and wrapper checksum
+        run: python3 scripts/verify-project-policy.py
+      - name: Validate release scripts
+        run: python3 -m py_compile scripts/*.py scripts/tests/*.py
+
+  debug-matrix:
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - PlayPlatformApi24
+          - PlayPlatformGenai
+          - PlayFullApi24
+          - PlayFullGenai
+          - DirectPlatformApi24
+          - DirectPlatformGenai
+          - DirectFullApi24
+          - DirectFullGenai
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Install Android 37 SDK platform
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-37"
+      - name: Test, lint and assemble ${{ matrix.variant }}Debug
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          "test${VARIANT}DebugUnitTest"
+          "lint${VARIANT}Debug"
+          "assemble${VARIANT}Debug"
+      - name: Upload reports only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: debug-reports-DO-NOT-DISTRIBUTE-${{ matrix.variant }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/reports/
+            app/build/test-results/
+
+  release-matrix:
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: PlayPlatformApi24
+            package_task: bundlePlayPlatformApi24Release
+          - variant: PlayPlatformGenai
+            package_task: bundlePlayPlatformGenaiRelease
+          - variant: PlayFullApi24
+            package_task: bundlePlayFullApi24Release
+          - variant: PlayFullGenai
+            package_task: bundlePlayFullGenaiRelease
+          - variant: DirectPlatformApi24
+            package_task: assembleDirectPlatformApi24Release
+          - variant: DirectPlatformGenai
+            package_task: assembleDirectPlatformGenaiRelease
+          - variant: DirectFullApi24
+            package_task: assembleDirectFullApi24Release
+          - variant: DirectFullGenai
+            package_task: assembleDirectFullGenaiRelease
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Install Android 37 SDK platform
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-37"
+      - name: Create disposable CI release key
+        env:
+          CI_KEYSTORE_PASSWORD: ci-only-password
+          CI_KEY_ALIAS: oxigen-ci
+        run: >-
+          keytool -genkeypair -noprompt
+          -keystore "$RUNNER_TEMP/oxigen-ci-release.jks"
+          -storepass "$CI_KEYSTORE_PASSWORD"
+          -keypass "$CI_KEYSTORE_PASSWORD"
+          -alias "$CI_KEY_ALIAS"
+          -keyalg RSA -keysize 3072 -validity 1
+          -dname "CN=OxigenPlayer CI, OU=Verification, O=Local, C=RO"
+      - name: Lint and package ${{ matrix.variant }}Release
+        env:
+          VARIANT: ${{ matrix.variant }}
+          PACKAGE_TASK: ${{ matrix.package_task }}
+          OXIGEN_RELEASE_STORE_FILE: ${{ runner.temp }}/oxigen-ci-release.jks
+          OXIGEN_RELEASE_STORE_PASSWORD: ci-only-password
+          OXIGEN_RELEASE_KEY_ALIAS: oxigen-ci
+          OXIGEN_RELEASE_KEY_PASSWORD: ci-only-password
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          "lint${VARIANT}Release"
+          "$PACKAGE_TASK"
+      - name: Fetch pinned NextLib corresponding source
+        if: contains(matrix.variant, 'Full')
+        run: >-
+          curl --fail --location --proto '=https'
+          "https://github.com/anilbeesetti/nextlib/archive/a4c1e634278b7c918c3801e08c9d0e3eaee4f7ae.zip"
+          --output "$RUNNER_TEMP/nextlib-a4c1e634278b7c918c3801e08c9d0e3eaee4f7ae.zip"
+      - name: Package complete corresponding source for GPL full variants
+        if: contains(matrix.variant, 'Full')
+        run: >-
+          python3 scripts/package-gpl-source.py
+          --version "2.2.7-${{ github.sha }}-${{ matrix.variant }}"
+          --nextlib-source "$RUNNER_TEMP/nextlib-a4c1e634278b7c918c3801e08c9d0e3eaee4f7ae.zip"
+      - name: Upload release verification artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-verification-${{ matrix.variant }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/reports/
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+            OxigenPlayer-*-corresponding-source.zip
+            OxigenPlayer-*-corresponding-source.zip.sha256
+
+  connected-device-tests:
+    needs: debug-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: phone-api37
+            system_image: system-images;android-37;google_apis;x86_64
+            variant: PlayPlatformApi24
+          - device: android-tv-api37
+            system_image: system-images;android-37;android-tv;x86_64
+            variant: PlayPlatformApi24
+          - device: android-tv-full-genai-api37
+            system_image: system-images;android-37;android-tv;x86_64
+            variant: DirectFullGenai
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Enable KVM when available
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Install emulator image and Android 37 SDK
+        env:
+          SYSTEM_IMAGE: ${{ matrix.system_image }}
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-37" "emulator" "$SYSTEM_IMAGE"
+          echo no | avdmanager create avd --force --name oxigen-ci --package "$SYSTEM_IMAGE"
+      - name: Run instrumented tests including ExternalPlaybackIntentInstrumentedTest
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          "$ANDROID_HOME/emulator/emulator" @oxigen-ci \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect -accel auto &
+          adb wait-for-device
+          until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 2; done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          # Scoped to :app so the :baselineprofile generator module never runs inside the
+          # instrumented-test gate; profile generation is an explicit, separate task.
+          ./gradlew --no-daemon --stacktrace ":app:connected${VARIANT}DebugAndroidTest"
+      - name: Upload instrumented-test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-test-${{ matrix.device }}-${{ matrix.variant }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            app/build/outputs/apk/androidTest/**/*.apk
+
+  dependency-baseline:
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Generate reviewable dependency locks and SHA-256 verification metadata
+        run: ./gradlew --no-daemon --write-locks --write-verification-metadata sha256 help
+      - name: Upload dependency integrity baseline for review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-integrity-baseline-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            gradle/verification-metadata.xml
+            **/gradle.lockfile

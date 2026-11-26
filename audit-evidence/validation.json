@@ -1,0 +1,146 @@
+{
+  "version": "2.2.4",
+  "versionCode": 15,
+  "changed_existing_files": [
+    "app/build.gradle.kts",
+    "README.md",
+    "audit-evidence/validation.json",
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/java/com/oxigenplayer/app/MainActivity.kt",
+    "app/src/main/java/com/oxigenplayer/app/LocalMediaLibrary.kt",
+    "app/src/main/java/com/oxigenplayer/app/PlayerViewModel.kt",
+    "app/src/main/java/com/oxigenplayer/app/TvFocusModifier.kt",
+    "app/src/main/java/com/oxigenplayer/app/OxigenApp.kt",
+    "app/src/main/java/com/oxigenplayer/app/ExoPlayerHelper.kt",
+    "app/src/main/java/com/oxigenplayer/app/ui/TrackSelectionDialog.kt",
+    "app/src/main/java/com/oxigenplayer/app/ui/DeviceMediaPickerDialog.kt",
+    "app/src/androidTest/java/com/oxigenplayer/app/ExternalPlaybackIntentInstrumentedTest.kt",
+    "app/src/androidTest/java/com/oxigenplayer/app/TvFocusModifierInstrumentedTest.kt",
+    "README.md",
+    "CHANGELOG.md",
+    "RELEASE.md",
+    "ANDROID_TV_AUDIT_2_2_4.md",
+    "update.json",
+    ".gitignore",
+    ".github/workflows/android.yml",
+    ".github/workflows/security.yml"
+  ],
+  "removed_files": [
+    "local.properties"
+  ],
+  "verification_notes": [
+    "MOJIBAKE, all eight locales: every non-ASCII character in app/src/main/res/values*/strings.xml had been UTF-8 encoded, decoded as Windows-1252 and re-encoded as UTF-8, so the app displayed 'Ãœbersetzen', 'SUBTÃTULOS' and 'ÐÝÐ°Ð·Ð²Ð°Ð½Ð¸Ðµ' instead of 'Übersetzen', 'SUBTÍTULOS' and 'Название'. Proven at byte level: values-es contained 43 41 52 47 41 52 20 53 55 42 54 c3 83 c2 8d 54 55 4c 4f 53 where valid UTF-8 for 'Í' is c3 8d. 754 strings were repaired by reversing the transform exactly (per-character cp1252 with latin-1 fallback, then decode as UTF-8). A dry run first confirmed every affected line round-tripped to valid text, and lines that were already correct were left byte-identical. The English values/strings.xml was affected too (4 strings carrying '…' as 'â€¦'). The original files are preserved in audit-evidence/mojibake-backup/.",
+    "The same detector flagged SubtitleParser.kt line 193, but inspection showed a false positive: the sequence is 'ĂÂÎȘȚ', correct Romanian uppercase diacritics, where 'Â' (U+00C2) is a legitimate letter rather than a mis-decode. That line was left unchanged. Likewise the 3 C1 byte-pairs found in resources.arsc were a false positive: they sit in a UTF-16LE pool and decode to U+8DC2/U+9EC2/U+94C2, CJK ideographs from bundled libraries, so a byte-level scan cannot judge them.",
+    "Verified in the compiled APK rather than only in source: resources.arsc was parsed as a real resource table (RES_TABLE -> string pools, honouring each pool's UTF-8/UTF-16 flag) and all 5843 pooled strings decoded. Result: 0 strings containing a C1 control character and 0 showing a double-encode signature. Spot-checked values are present in the binary, e.g. German 'Schließen', 'Übersetzungsquelle', 'Ändern', Spanish 'CARGAR SUBTÍTULOS', French 'Paramètres', 'À propos du développeur', Portuguese 'Definições', Romanian 'Setări', 'Schimbă', Russian 'Настройки', English 'Stream address (https://…)'. No U+FFFD replacement characters are present.",
+    "scripts/verify-project-policy.py gained verify_text_encoding(), which fails the policy gate on any C1 control character (U+0080-U+009F) or a 'Ã'/'Â'/'â' immediately followed by one, in any app/src/main/res XML. Such characters cannot occur in legitimate translated copy. The guard was tested in both directions: it passes on the repaired tree and fails when the mojibake is deliberately re-introduced into values-es/strings.xml (reported values-es/strings.xml:6), after which the file was confirmed restored byte-for-byte.",
+    "Both debug APKs were rebuilt after the fix (assembleDirectFullClassicDebug, assembleDirectPlatformClassicDebug, BUILD SUCCESSFUL) and unit tests pass (testDirectFullClassicDebugUnitTest + testDirectPlatformClassicDebugUnitTest, BUILD SUCCESSFUL). All 8 locales still parse as valid XML with 208 <string> entries each, no duplicate names and no key drift between locales.",
+    "versionCode/versionName in app/build.gradle.kts were 14/2.2.3 while this file, update.json, CHANGELOG.md, RELEASE.md and ANDROID_TV_AUDIT_2_2_4.md all declared 15/2.2.4. Corrected to 15/2.2.4 and confirmed on the rebuilt APK with aapt2 dump badging.",
+    "The original android_build.log captured a wrapper download failure (Network is unreachable) yet was recorded as a PASS. That entry is now FAIL with an explanatory result, and the offline rebuild is recorded separately.",
+    "All 8 debug variants were rebuilt locally and each APK verified with aapt2 (versionCode=15, versionName=2.2.4). They are DEBUG-signed with the public Android debug key (CN=Android Debug) and are therefore not distributable.",
+    "The 4 direct RELEASE variants were then built and signed locally with a disposable verification keystore (CN=OxigenPlayer Verification, alias oxigen-ci, generated locally outside the repository, exactly as .github/workflows/android.yml does), followed by the 4 play variants. All 8 release variants now build, minify, shrink, pass lintVital and sign end to end. Each APK was verified with aapt2 badging (versionCode=15, versionName=2.2.4, targetSdk=37; minSdk 24 classic / 26 nano) and apksigner verify (v2 + v3 signatures, 1 signer). REQUEST_INSTALL_PACKAGES is present only on the 4 direct variants, as intended. These APKs prove the release pipeline works end to end, but they are signed with a throwaway key and MUST NOT be published; a real release still requires the production OXIGEN_RELEASE_* keystore.",
+    "ExoPlayerHelper applied EXTENSION_RENDERER_MODE_ON to both the hardware-first and the software-first factory, so the recovery build was configured as if it still wanted platform decoders. FFmpegOnlyRenderersFactory ignores that flag (it adds no platform renderers), so the behaviour was inert, but it misrepresented the intent of the recovery path. The two factories are now configured separately, with the software-only build on EXTENSION_RENDERER_MODE_OFF.",
+    "NextLib 1.10.1-0.13.0 was reviewed against media3 1.11.1. FFmpegOnlyRenderersFactory overrides only buildVideoRenderers and buildAudioRenderers, so text and metadata renderers still come from DefaultRenderersFactory and are unaffected by the software-first switch. NextTextRenderer's subtitle-offset behaviour is unused by this app (captions are rendered by SubtitleEngine), so dropping it in the recovery build is not a regression. The cross-version combination remains unexercised on a device.",
+    "The pre-existing local release keystore is still intact and was deliberately NOT overwritten, but its password is not recorded anywhere on this machine, so the earlier packageDirectFullClassicRelease failure ('keystore password was incorrect') could not be resolved with it. Supply the real password to sign a distributable APK.",
+    "LocalMediaLibrary.kt and SubtitleParser.kt: the local-media subtitle query matched only .srt/.vtt/.ass/.ssa and built its SQL by string concatenation, so .smi/.ttml/.dfxp sidecars never appeared in the picker. The extension list is now the single SUPPORTED_SUBTITLE_EXTENSIONS constant, the LIKE patterns are bound parameters inside a parenthesised OR group, and SubtitleParser parses SMI and TTML/DFXP under the same entry and text-size limits as SRT/ASS. Formats that genuinely cannot be parsed (binary VobSub, MicroDVD, LRC) stay unlisted rather than being offered and then failing.",
+    "Unit tests were extended with 4 cases covering SMI parsing, TTML clock and unit offsets, nested-markup flattening and rejection of unparseable or inverted TTML timings. 108 tests pass in total. These tests caught two defects during development (SMI misdetected without an extension, and a valid '00:00:01.500' TTML offset being rejected); both are fixed. Lint additionally caught a literal BOM character introduced in SubtitleParser.kt, since replaced with a '\\uFEFF' escape.",
+    "The `full` variants bundle NextLib/FFmpeg (native libraries for arm64-v8a, armeabi-v7a, x86 and x86_64) compiled against media3 1.10.1 while the app pins 1.11.1. The app compiles and the renderers are constructed through DefaultRenderersFactory, but this cross-version combination has NOT been exercised on a device and should be validated before release. Its FFmpeg codec map does not cover AV1, WMV/WMA, Vorbis-in-Matroska beyond the listed MIME types, or raw PCM variants other than mulaw/alaw.",
+    "No further codec could be added in this environment: there is no network access, and androidx.media3:media3-decoder (cached at 1.11.1) contains only the Decoder extension interfaces, not AV1/VP9 software decoder implementations.",
+    "update.json intentionally stays enabled:false with an empty sha256; it must be regenerated from the real signed release APK via scripts/generate-update-metadata.py.",
+    "instrumentation_tests were run on an Android TV emulator (emulator-5554, AOSP TV on x86, API 36, x86): OK (7 tests), 0 failures. The connectedAndroidTest Gradle task was unusable because com.android.tools.utp:gradle-work-action:32.4.1 is not in the offline Gradle cache, so the APKs were installed with adb and the suite run with am instrument. This supersedes the previous NOT_RUN claim, which was wrong: an emulator was reachable."
+  ],
+  "xml_files_parsed": 27,
+  "delimiter_preflight_errors": [],
+  "checks": [
+    {
+      "name": "resource_text_encoding",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "app/src/main/res/values*/strings.xml (8 locales) + compiled resources.arsc",
+      "evidence": "audit-evidence/mojibake-backup/ (pre-repair originals)",
+      "result": "754 double-encoded strings repaired. All 8 locales parse as valid XML with 208 <string> entries each, no duplicates and no key drift. The rebuilt APK's resources.arsc was parsed as a real resource table: 5843 pooled strings decoded, 0 containing a C1 control character and 0 with a double-encode signature. The new verify_text_encoding() policy guard was confirmed to both pass on the repaired tree and fail on deliberately re-introduced mojibake."
+    },
+    {
+      "name": "project_policy",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    {
+      "name": "packaging_tests",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    {
+      "name": "android_build",
+      "exit_code": 1,
+      "status": "FAIL",
+      "scope": "first attempt, Gradle wrapper distribution download",
+      "evidence": "audit-evidence/android_build.log",
+      "result": "NOT A BUILD: the wrapper could not download gradle-9.7.1 (Network is unreachable). This log records a failed bootstrap, not a compilation. Superseded by android_build_offline below."
+    },
+    {
+      "name": "android_build_offline",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": ":app:assembleDirectFullClassicDebug (offline, cached Gradle 9.7.1)",
+      "evidence": "audit-evidence/rebuild_directfullclassic_debug.log",
+      "result": "BUILD SUCCESSFUL in 47s; 39 actionable tasks: 12 executed, 27 up-to-date. APK verified with aapt2 dump badging: versionCode=15 versionName=2.2.4 targetSdk=37."
+    },
+    {
+      "name": "full_debug_matrix_rebuild",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "assemble<Variant>Debug for all 8 variants (offline, cached Gradle 9.7.1)",
+      "evidence": "audit-evidence/full_debug_matrix_rebuild.log",
+      "result": "BUILD SUCCESSFUL in 4m 27s; 312 actionable tasks: 211 executed, 62 from cache, 39 up-to-date. All 8 APKs verified with aapt2 dump badging: versionCode=15, versionName=2.2.4. Per-edition expectations confirmed: REQUEST_INSTALL_PACKAGES only on the 4 direct variants, minSdk 26 on the 4 nano variants and 24 otherwise."
+    },
+    {
+      "name": "android_test_apk_assemble",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": ":app:assembleDirectPlatformClassicDebugAndroidTest + :app:assembleDirectFullNanoDebugAndroidTest",
+      "evidence": "audit-evidence/android_test_assemble.log",
+      "result": "BUILD SUCCESSFUL in 1m 56s"
+    },
+    {
+      "name": "tv_variant_build_via_bat",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "BUILD_ANDROID_TV.bat without local.properties, SDK resolved through ANDROID_HOME",
+      "evidence": "audit-evidence/tv_variant_build.log",
+      "result": "BUILD SUCCESSFUL in 57s"
+    },
+    {
+      "name": "py_compile_scripts",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    {
+      "name": "software_fallback_unit_tests",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "testDirectFullClassicDebugUnitTest + testDirectPlatformClassicDebugUnitTest",
+      "result": "21 test classes, 118 tests, 0 failures, 0 errors, 0 skipped. Includes the new SoftwareFallbackPolicyTest covering the decoder-failure classification that drives the software rebuild."
+    },
+    {
+      "name": "release_all_variants_lint_and_package",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "lintDirectFullClassicRelease + assemble<Variant>Release for all 8 variants (offline, cached Gradle 9.7.1)",
+      "result": "BUILD SUCCESSFUL. All 8 APKs verified with aapt2 dump badging (versionCode=15, versionName=2.2.4, targetSdk=37; minSdk 24 classic / 26 nano) and apksigner verify (v2 + v3, 1 signer). REQUEST_INSTALL_PACKAGES present only on the 4 direct variants. Signed with a disposable local verification key; NOT distributable."
+    },
+    {
+      "name": "instrumented_tests",
+      "exit_code": 0,
+      "status": "PASS",
+      "scope": "com.oxigenplayer.app.test/androidx.test.runner.AndroidJUnitRunner on emulator-5554 (AOSP TV on x86, API 36, x86)",
+      "evidence": "audit-evidence/instrumented_tests.log",
+      "result": "OK (7 tests), 0 failures, 0 errors. The connectedAndroidTest Gradle task could not be used because com.android.tools.utp:gradle-work-action:32.4.1 is absent from the offline Gradle cache, so the app and test APKs were installed with adb and the suite executed with am instrument instead. This supersedes the earlier NOT_RUN status: an Android TV emulator was reachable after all."
+    }
+  ],
+  "android_unit_tests": "RUN: 21 test classes, 118 tests, 0 failures, 0 errors, 0 skipped (testDirectFullClassicDebugUnitTest + testDirectPlatformClassicDebugUnitTest; see app/build/test-results)",
+  "instrumentation_tests": "RUN: 7 tests, 0 failures, 0 errors on an Android TV emulator (emulator-5554, AOSP TV on x86, API 36) via adb am instrument; see audit-evidence/instrumented_tests.log",
+  "apk_generated": true,
+  "apk_scope": "debug for all 8 variants plus signed release for the 4 direct variants; all verified with aapt2 badging versionCode=15 versionName=2.2.4 targetSdk=37",
+  "release_artifacts": "BUILT AND SIGNED for the 4 direct variants with a disposable verification keystore; pipeline verified end to end but not distributable until signed with the production OXIGEN_RELEASE_* keystore",
+  "device_certified": false
+}

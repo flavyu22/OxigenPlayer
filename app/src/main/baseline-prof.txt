@@ -1,0 +1,20 @@
+# OxigenPlayer Baseline Profile
+Lcom/oxigenplayer/app/MainActivity;
+Lcom/oxigenplayer/app/OxigenApp;
+Lcom/oxigenplayer/app/PlayerViewModel;
+Lcom/oxigenplayer/app/ExoPlayerHelper;
+Lcom/oxigenplayer/app/SubtitleEngine;
+Lcom/oxigenplayer/app/TranslationManager;
+Lcom/oxigenplayer/app/NetworkClient;
+Lcom/oxigenplayer/app/DevicePerformance;
+Lcom/oxigenplayer/app/LocalMediaLibrary;
+Lcom/oxigenplayer/app/TvFocusModifierKt;
+Lcom/oxigenplayer/app/PlayerComponentsKt;
+Lcom/oxigenplayer/app/ui/DialogCardDefaultsKt;
+Lcom/oxigenplayer/app/ui/DeviceMediaPickerDialogKt;
+Lcom/oxigenplayer/app/ui/PlayerDialogsOverlayKt;
+
+HSPLcom/oxigenplayer/app/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/oxigenplayer/app/OxigenApp;->onCreate()V
+HSPLcom/oxigenplayer/app/ExoPlayerHelper;->createTvOptimizedPlayer(Landroid/content/Context;Lcom/oxigenplayer/app/PreferencesManager;)Landroidx/media3/exoplayer/ExoPlayer;
+HSPLcom/oxigenplayer/app/SubtitleEngine;-><init>(Lcom/oxigenplayer/app/TranslationManager;Lkotlinx/coroutines/CoroutineScope;)V

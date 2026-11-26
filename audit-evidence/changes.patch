@@ -1,0 +1,525 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -77,8 +77,8 @@
+         applicationId = configuredApplicationId
+         minSdk = 24
+         targetSdk = 37
+-        versionCode = 14
+-        versionName = "2.2.3"
++        versionCode = 15
++        versionName = "2.2.4"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+ 
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -82,14 +82,19 @@
+                 <data android:scheme="https" />
+                 <data android:scheme="rtsp" />
+                 <data android:scheme="rtsps" />
+-                <!-- Deep link used by other media apps (Jellyfin, Stremio, Infuse…)
+-                     to launch OxigenPlayer as their external player. -->
+                 <data android:scheme="oxigenplayer" />
+                 <data android:mimeType="video/*" />
+                 <data android:mimeType="audio/*" />
+                 <data android:mimeType="application/x-mpegurl" />
+                 <data android:mimeType="application/vnd.apple.mpegurl" />
+                 <data android:mimeType="application/dash+xml" />
++            </intent-filter>
++            <!-- Custom links normally carry no MIME type; keep them separate from media files. -->
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:scheme="oxigenplayer" />
+             </intent-filter>
+         </activity>
+ 
+--- a/app/src/main/java/com/oxigenplayer/app/MainActivity.kt
++++ b/app/src/main/java/com/oxigenplayer/app/MainActivity.kt
+@@ -87,6 +87,7 @@
+ 
+     private val playerViewModel: PlayerViewModel by viewModels()
+     private var pipModeListener: ((Boolean) -> Unit)? = null
++    internal var stopPlaybackOnExit: (() -> Unit)? = null
+     private var isPlaybackActive: Boolean = false
+     private var pipSourceRect: Rect = Rect()
+     private var pipAspectRatio: Float? = null
+@@ -176,7 +177,24 @@
+             private var lastBackTime = 0L
+ 
+             override fun handleOnBackPressed() {
+-                val currentTime = System.currentTimeMillis()
++                val state = playerViewModel.uiState.value
++                if (state.activeDialog != null) {
++                    playerViewModel.dismissDialog()
++                    return
++                }
++                if (state.hasMedia && (state.showControls || state.showOnlyTopBar ||
++                        state.showOnlyBottomBar || state.showOnlyPlayButton)) {
++                    playerViewModel.hideControls()
++                    return
++                }
++                if (isTelevisionDevice(this@MainActivity)) {
++                    playerViewModel.persistPlaybackPosition(force = true)
++                    stopPlaybackOnExit?.invoke()
++                    stopService(Intent(this@MainActivity, PlaybackService::class.java))
++                    finish()
++                    return
++                }
++                val currentTime = android.os.SystemClock.elapsedRealtime()
+                 if (currentTime - lastBackTime > 2000) {
+                     backPressCount = 0
+                 }
+@@ -617,15 +635,17 @@
+         localMediaAccess = LocalMediaLibrary.access(context)
+         isLocalMediaPermissionRequired = !localMediaAccess.hasAnyAccess
+         if (!localMediaAccess.hasAnyAccess) {
++            LocalMediaLibrary.invalidateMediaCache()
++            localMediaSnapshot = LocalMediaSnapshot()
+             isLocalMediaLoading = false
+             return@LaunchedEffect
+         }
+ 
+         // Fast open path: reuse the in-process snapshot on a normal reopen instead of
+-        // re-scanning MediaStore. A fresh scan runs only after the refresh action or a
+-        // media-permission change sets localMediaRefreshPending.
++        // re-scanning MediaStore. Expiry, permission changes and resume/refresh
++        // trigger a fresh scan; partial access is never cached.
+         val cachedSnapshot = if (!localMediaRefreshPending) {
+-            LocalMediaLibrary.cachedSnapshot()
++            LocalMediaLibrary.cachedSnapshot(localMediaAccess)
+         } else {
+             null
+         }
+@@ -711,6 +731,14 @@
+     }
+ 
+     val currentPlayer = player
++    DisposableEffect(currentPlayer, context) {
++        val activity = context as? MainActivity
++        activity?.stopPlaybackOnExit = {
++            currentPlayer?.pause()
++            currentPlayer?.stop()
++        }
++        onDispose { activity?.stopPlaybackOnExit = null }
++    }
+     var internalBitmapCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+ 
+     LaunchedEffect(currentPlayer, videoQualityProfile, repeatCurrentMedia) {
+@@ -789,6 +817,7 @@
+                 val activeDialog = vm.uiState.value.activeDialog
+                 if (activeDialog == null) resumeFocusRevision++
+                 if (activeDialog == DialogType.MediaBrowser) {
++                    localMediaRefreshPending = true
+                     localMediaRevision++
+                 }
+             }
+@@ -836,7 +865,7 @@
+         uiState.showOnlyPlayButton,
+         uiState.hasMedia,
+         uiState.isSeekable,
+-        uiState.duration,
++        uiState.duration > 0L,
+         uiState.lockedMode,
+         uiState.isPipMode,
+         isOtherUiVisible,
+@@ -901,8 +930,9 @@
+     }
+ 
+     // Dialogs on TV are interaction-heavy; while one is open the position ticker behind it
+-    // is invisible work. Keep PiP polling, otherwise pause the ticker until the dialog closes.
+-    val shouldPollPosition = (lifecycleStarted && !isOtherUiVisible) || uiState.isPipMode
++    // is invisible work. Keep PiP and A-B loop enforcement active through dialogs.
++    val shouldPollPosition = (lifecycleStarted &&
++        (!isOtherUiVisible || uiState.abRepeat.phase == AbRepeatPhase.LOOPING)) || uiState.isPipMode
+     LaunchedEffect(currentPlayer, shouldPollPosition) {
+         val p = currentPlayer ?: return@LaunchedEffect
+         if (!shouldPollPosition) return@LaunchedEffect
+@@ -1002,22 +1032,16 @@
+         { event: androidx.compose.ui.input.key.KeyEvent ->
+             if (event.type == KeyEventType.KeyDown) {
+                 val keyCode = event.nativeKeyEvent.keyCode
+-                    val currentState = vm.uiState.value
+-
+-                    if (keyCode == KeyEvent.KEYCODE_BACK) {
+-                        val anyVisible = (currentState.showControls || currentState.showOnlyTopBar ||
+-                            currentState.showOnlyBottomBar || currentState.showOnlyPlayButton) && currentState.hasMedia
+-                    if (anyVisible) {
+-                        vm.hideControls()
+-                        true
+-                    } else {
+-                        false
+-                    }
++                val currentState = vm.uiState.value
++                // Back belongs to OnBackPressedDispatcher on every Android version.
++                if (keyCode == KeyEvent.KEYCODE_BACK || currentState.activeDialog != null) {
++                    false
+                 } else {
+                     val p = currentPlayer
+                     if (p != null) {
+                         handleGlobalKeyEvent(
+                             keyCode, p, vm,
++                            repeatCount = event.nativeKeyEvent.repeatCount,
+                             onShowMedia = openMediaBrowser,
+                             onToggleDiagnostics = {
+                                 showDiagnostics = !showDiagnostics
+@@ -1036,7 +1060,11 @@
+                 val keyCode = event.nativeKeyEvent.keyCode
+                 val state = vm.uiState.value
+ 
+-                if (state.lockedMode == LockedMode.BOTTOM_BAR_ONLY) {
++                if (state.activeDialog == null && keyCode != KeyEvent.KEYCODE_BACK) {
++                    vm.startHideTimer()
++                }
++                if (state.activeDialog == null && state.isSeekable &&
++                    state.lockedMode == LockedMode.BOTTOM_BAR_ONLY) {
+                     if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                         vm.onSeekEvent(-TV_REMOTE_SEEK_STEP_MS)
+                         true
+@@ -1555,9 +1583,19 @@
+     keyCode: Int,
+     player: Player,
+     vm: PlayerViewModel,
++    repeatCount: Int,
+     onShowMedia: () -> Unit,
+     onToggleDiagnostics: () -> Unit,
+ ): Boolean {
++    // Holding a transport/menu key must not repeatedly toggle playback or open dialogs.
++    // Direction and seek repeats remain available for fast remote scrubbing.
++    if (repeatCount > 0 && keyCode in setOf(
++            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
++            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY,
++            KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP,
++            KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SEARCH,
++            KeyEvent.KEYCODE_MEDIA_TOP_MENU,
++        )) return true
+     val uiState = vm.uiState.value
+     val isAnyVisible = uiState.showControls || uiState.showOnlyTopBar ||
+             uiState.showOnlyBottomBar || uiState.showOnlyPlayButton
+--- a/app/src/main/java/com/oxigenplayer/app/LocalMediaLibrary.kt
++++ b/app/src/main/java/com/oxigenplayer/app/LocalMediaLibrary.kt
+@@ -8,6 +8,8 @@
+ import android.net.Uri
+ import android.os.Build
+ import android.os.Environment
++import android.os.SystemClock
++import java.util.concurrent.atomic.AtomicLong
+ import android.os.storage.StorageManager
+ import android.os.storage.StorageVolume
+ import android.provider.BaseColumns
+@@ -72,8 +74,15 @@
+     private const val COLUMN_DURATION = "duration"
+ 
+     /** Last successful MediaStore snapshot, reused so reopening the media picker skips a full scan. */
++    private data class CachedMedia(
++        val snapshot: LocalMediaSnapshot,
++        val access: LocalMediaAccess,
++        val generation: Long,
++        val loadedAtMs: Long,
++    )
++    private val cacheGeneration = AtomicLong()
+     @Volatile
+-    private var loadedSnapshot: LocalMediaSnapshot? = null
++    private var loadedSnapshot: CachedMedia? = null
+     private val snapshotMutex = Mutex()
+ 
+     fun requiredPermissions(): Array<String> =
+@@ -132,14 +141,15 @@
+      */
+     suspend fun ensureSnapshot(context: Context, access: LocalMediaAccess): LocalMediaSnapshot =
+         withContext(Dispatchers.IO) {
+-            loadedSnapshot?.let { return@withContext it }
+             if (!access.hasAnyAccess) return@withContext LocalMediaSnapshot()
++            cachedSnapshot(access)?.let { return@withContext it }
+             snapshotMutex.withLock {
+-                loadedSnapshot ?: queryFresh(context.applicationContext, access)
++                cachedSnapshot(access) ?: queryFresh(context.applicationContext, access)
+             }
+         }
+ 
+     private fun queryFresh(context: Context, access: LocalMediaAccess): LocalMediaSnapshot {
++        val generation = cacheGeneration.get()
+         val appLang = ((context.applicationContext as? OxigenApp)?.prefs
+             ?: PreferencesManager(context.applicationContext)).getAppLanguage()
+         val volumes = currentVolumes(context, appLang)
+@@ -191,14 +201,23 @@
+             files = results
+                 .distinctBy { it.uri }
+                 .sortedWith(LOCAL_MEDIA_COMPARATOR),
+-        ).also { loadedSnapshot = it }
++        ).also {
++            loadedSnapshot = CachedMedia(it, access, generation, SystemClock.elapsedRealtime())
++        }
+     }
+ 
+     /** Returns the last successful MediaStore snapshot without scanning the database again. */
+-    fun cachedSnapshot(): LocalMediaSnapshot? = loadedSnapshot
++    fun cachedSnapshot(access: LocalMediaAccess): LocalMediaSnapshot? {
++        if (!access.hasAnyAccess || access.hasPartialVideoAccess) return null
++        val cached = loadedSnapshot ?: return null
++        if (cached.access != access || cached.generation != cacheGeneration.get()) return null
++        if (SystemClock.elapsedRealtime() - cached.loadedAtMs !in 0L..15_000L) return null
++        return cached.snapshot
++    }
+ 
+     /** Drops the cached snapshot so the next media-picker reopen performs a fresh scan. */
+     fun invalidateMediaCache() {
++        cacheGeneration.incrementAndGet()
+         loadedSnapshot = null
+     }
+ 
+@@ -295,13 +314,14 @@
+             }
+         }.joinToString(" AND ")
+ 
+-        context.contentResolver.query(
++        val cursor = context.contentResolver.query(
+             collectionUri,
+             projection,
+             selection,
+             null,
+             "${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
+-        )?.use { cursor ->
++        ) ?: throw IllegalStateException("Media provider returned no cursor for $collectionUri")
++        cursor.use {
+             val idColumn = cursor.getColumnIndexOrThrow(BaseColumns._ID)
+             val nameColumn = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+             val mimeColumn = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+--- a/app/src/main/java/com/oxigenplayer/app/PlayerViewModel.kt
++++ b/app/src/main/java/com/oxigenplayer/app/PlayerViewModel.kt
+@@ -455,12 +455,12 @@
+         // screen. Several UI paths call this method unconditionally after a
+         // seek/dialog action, so the guard belongs here rather than at callers.
+         val state = _uiState.value
+-        if (!state.hasMedia || !state.isPlaying) return
++        if (!state.hasMedia || !state.isPlaying || state.activeDialog != null) return
+ 
+         hideTimerJob = viewModelScope.launch {
+             delay(3500) // Reduced from 5000 ms for faster interaction.
+             val latestState = _uiState.value
+-            if (!latestState.isPlaying) return@launch
++            if (!latestState.isPlaying || latestState.activeDialog != null) return@launch
+             if (latestState.isSeeking) {
+                 // Reset the timer while seeking continues.
+                 startHideTimer()
+--- a/app/src/main/java/com/oxigenplayer/app/TvFocusModifier.kt
++++ b/app/src/main/java/com/oxigenplayer/app/TvFocusModifier.kt
+@@ -236,6 +236,10 @@
+                     scaleX = scale
+                     scaleY = scale
+                     transformOrigin = TransformOrigin.Center
++                } else {
++                    // Layer properties survive updates; clear the previous animated scale.
++                    scaleX = 1f
++                    scaleY = 1f
+                 }
+             }
+         }
+@@ -318,5 +322,7 @@
+     override fun onDetach() {
+         animationJob?.cancel()
+         animationJob = null
+-    }
+-}
++        state.isFocused = false
++        state.focusProgress = 0f
++    }
++}
+--- a/app/src/main/java/com/oxigenplayer/app/OxigenApp.kt
++++ b/app/src/main/java/com/oxigenplayer/app/OxigenApp.kt
+@@ -60,6 +60,7 @@
+     }
+ 
+     private fun clearOptionalCaches() {
++        LocalMediaLibrary.invalidateMediaCache()
+         maintenanceScope.launch {
+             runCatching { NetworkClient.evictCacheIfInitialized() }
+                 .onFailure { Log.w("OxigenApp", "Unable to trim network cache", it) }
+--- a/app/src/main/java/com/oxigenplayer/app/ExoPlayerHelper.kt
++++ b/app/src/main/java/com/oxigenplayer/app/ExoPlayerHelper.kt
+@@ -99,6 +99,12 @@
+                 bufferForPlaybackMs,
+                 bufferAfterRebufferMs,
+             )
++            // The default target scales with selected tracks, not the device heap.
++            .setTargetBufferBytes(when {
++                performance.veryLowRam -> 24 * 1024 * 1024
++                isLowRamDevice -> 40 * 1024 * 1024
++                else -> 64 * 1024 * 1024
++            })
+             .setPrioritizeTimeOverSizeThresholds(false)
+             .setBackBuffer(if (isLowRamDevice) 0 else 5_000, false)
+             .build()
+--- a/app/src/main/java/com/oxigenplayer/app/ui/TrackSelectionDialog.kt
++++ b/app/src/main/java/com/oxigenplayer/app/ui/TrackSelectionDialog.kt
+@@ -22,6 +22,10 @@
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.setValue
++import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+@@ -48,11 +52,23 @@
+     onUseExternalSubtitlesChange: (Boolean) -> Unit,
+     onPickExternalSubtitles: () -> Unit,
+ ) {
+-    val tracks = player.currentTracks
+-    val parameters = player.trackSelectionParameters
++    var tracks by remember(player) { mutableStateOf(player.currentTracks) }
++    var parameters by remember(player) { mutableStateOf(player.trackSelectionParameters) }
++    DisposableEffect(player) {
++        val listener = object : Player.Listener {
++            override fun onEvents(player: Player, events: Player.Events) {
++                tracks = player.currentTracks
++                parameters = player.trackSelectionParameters
++            }
++        }
++        player.addListener(listener)
++        tracks = player.currentTracks
++        parameters = player.trackSelectionParameters
++        onDispose { player.removeListener(listener) }
++    }
+     val switchFocusRequester = remember { FocusRequester() }
+-
+-    LaunchedEffect(Unit) { switchFocusRequester.requestFocus() }
++    var initialFocusRequested by remember { mutableStateOf(false) }
++
+ 
+     fun setTextTracksDisabled(disabled: Boolean) {
+         player.trackSelectionParameters = player.trackSelectionParameters
+@@ -79,6 +95,13 @@
+                         .padding(horizontal = 8.dp),
+                 ) {
+                     item(key = "external_subtitle_toggle") {
++                        // Request only after this lazy item has entered composition.
++                        LaunchedEffect(Unit) {
++                            if (!initialFocusRequested) {
++                                switchFocusRequester.requestFocus()
++                                initialFocusRequested = true
++                            }
++                        }
+                         ListItem(
+                             headlineContent = {
+                                 Text(
+--- a/app/src/main/java/com/oxigenplayer/app/ui/DeviceMediaPickerDialog.kt
++++ b/app/src/main/java/com/oxigenplayer/app/ui/DeviceMediaPickerDialog.kt
+@@ -75,6 +75,7 @@
+ ) {
+     var selectedVolumeId by remember { mutableStateOf<String?>(null) }
+     val sourceFocus = remember { FocusRequester() }
++    var initialFocusRequested by remember { mutableStateOf(false) }
+     // Build the volume index once per snapshot. Changing a storage chip is now O(1) instead
+     // of filtering the complete library again, which matters on TVs with thousands of files.
+     val filesByVolume = remember(files) { files.groupBy { it.volume.id } }
+@@ -94,9 +95,6 @@
+         if (selectedVolumeId != null && volumes.none { it.id == selectedVolumeId }) {
+             selectedVolumeId = null
+         }
+-    }
+-    LaunchedEffect(Unit) {
+-        sourceFocus.requestFocus()
+     }
+ 
+     FastDialog(onDismiss = onDismiss) {
+@@ -160,6 +158,12 @@
+                     modifier = Modifier.fillMaxWidth(),
+                 ) {
+                     item(key = "all") {
++                        LaunchedEffect(Unit) {
++                            if (!initialFocusRequested) {
++                                sourceFocus.requestFocus()
++                                initialFocusRequested = true
++                            }
++                        }
+                         MediaSourceChip(
+                             label = OxigenStrings.get(appLang, "all_storage"),
+                             selected = selectedVolumeId == null,
+--- a/app/src/androidTest/java/com/oxigenplayer/app/ExternalPlaybackIntentInstrumentedTest.kt
++++ b/app/src/androidTest/java/com/oxigenplayer/app/ExternalPlaybackIntentInstrumentedTest.kt
+@@ -13,6 +13,18 @@
+ 
+ @RunWith(AndroidJUnit4::class)
+ class ExternalPlaybackIntentInstrumentedTest {
++    @Test
++    fun mimeLessDeepLinkResolvesToMainActivity() {
++        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
++        val intent = Intent(Intent.ACTION_VIEW,
++            "oxigenplayer://play?url=https%3A%2F%2Fexample.com%2Fvideo.mp4".toUri())
++            .setPackage(context.packageName)
++        val resolved = context.packageManager.resolveActivity(
++            intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
++        assertNotNull(resolved)
++        assertEquals(MainActivity::class.java.name, resolved?.activityInfo?.name)
++    }
++
+     @Test
+     fun rtspsViewIntent_isAcceptedByTheRealIntentPath() {
+         // setType() clears a previously set data URI, so build the intent with setDataAndType
+--- a/app/src/androidTest/java/com/oxigenplayer/app/TvFocusModifierInstrumentedTest.kt
++++ b/app/src/androidTest/java/com/oxigenplayer/app/TvFocusModifierInstrumentedTest.kt
+@@ -2,6 +2,15 @@
+ package com.oxigenplayer.app
+ 
+ import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.size
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.remember
++import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.ui.input.key.Key
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.test.assertIsFocused
++import androidx.compose.ui.test.performKeyInput
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.platform.testTag
+ import androidx.compose.ui.test.assertHasClickAction
+@@ -14,6 +23,34 @@
+ class TvFocusModifierInstrumentedTest {
+     @get:Rule
+     val composeRule = createComposeRule()
++
++    @Test
++    fun remoteMovesFocusAndActivatesOnlyTheSelectedControl() {
++        var firstClicks = 0
++        var secondClicks = 0
++        composeRule.setContent {
++            val first = remember { FocusRequester() }
++            Row {
++                Box(Modifier.size(64.dp).testTag("first")
++                    .tvFocusable(focusRequester = first, onClick = { firstClicks++ }))
++                Box(Modifier.size(64.dp).testTag("second")
++                    .tvFocusable(onClick = { secondClicks++ }))
++            }
++            LaunchedEffect(Unit) { first.requestFocus() }
++        }
++        composeRule.onNodeWithTag("first").assertIsFocused().performKeyInput {
++            keyDown(Key.DirectionRight)
++            keyUp(Key.DirectionRight)
++        }
++        composeRule.onNodeWithTag("second").assertIsFocused().performKeyInput {
++            keyDown(Key.DirectionCenter)
++            keyUp(Key.DirectionCenter)
++        }
++        composeRule.runOnIdle {
++            org.junit.Assert.assertEquals(0, firstClicks)
++            org.junit.Assert.assertEquals(1, secondClicks)
++        }
++    }
+ 
+     @Test
+     fun tvFocusableExposesButtonAndSelectionSemantics() {
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,6 @@
+-# OxigenPlayer Pro 2.2.3
++# OxigenPlayer Pro 2.2.4
++
++> Android TV source repair, 2026-09-19. Read `ANDROID_TV_AUDIT_2_2_4.md` for fixes and unverified device/build gates. No APK is included. On Windows run `BUILD_ANDROID_TV.bat` with JDK 25 and Android SDK 37 installed.
+ 
+ OxigenPlayer Pro is an Android and Android TV media player written in Kotlin,
+ Jetpack Compose and AndroidX Media3. The same project supports touch devices,

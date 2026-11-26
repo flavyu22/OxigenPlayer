@@ -1,0 +1,19 @@
+NextLib
+Copyright its contributors
+Project: https://github.com/anilbeesetti/nextlib
+License: GNU General Public License version 3.0
+
+The optional OxigenPlayer `full` codec flavor links NextLib/FFmpeg software
+renderers into the application. Do not distribute a `full` artifact unless you
+comply with the GPLv3, including the corresponding-source and notice
+requirements. The default `platform` flavor does not include NextLib.
+
+Pinned source revision used by OxigenPlayer Pro full variants:
+- Maven coordinate: io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.17.0
+- Upstream tag: v1.11.1-0.17.0
+- Upstream commit: a4c1e634278b7c918c3801e08c9d0e3eaee4f7ae
+- Source archive: https://github.com/anilbeesetti/nextlib/archive/a4c1e634278b7c918c3801e08c9d0e3eaee4f7ae.zip
+
+The corresponding-source packaging script requires this exact upstream source archive or directory
+and places it under third-party/nextlib in the published source package.
+

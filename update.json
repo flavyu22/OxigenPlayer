@@ -1,4 +1,9 @@
 {
-  "versionCode": 2,
-  "downloadUrl": "https://github.com/flavyu22/OxigenPlayer/releases/download/v1.1/app-debug.apk"
+  "enabled": false,
+  "versionCode": 20,
+  "versionName": "2.2.9",
+  "packageName": "com.oxigenplayer.app",
+  "downloadUrl": "https://github.com/flavyu22/OxigenPlayer/releases/download/v2.2.9/OxigenPlayer-v2.2.9.apk",
+  "sha256": "",
+  "sizeBytes": 0
 }

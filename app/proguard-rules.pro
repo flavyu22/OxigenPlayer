@@ -1,21 +1,40 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Keep information required for useful, retraceable crash reports and reflection.
+-keepattributes SourceFile,LineNumberTable,Signature,InnerClasses,EnclosingMethod,Exceptions,*Annotation*
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Remove low-value logging from release builds without suppressing errors.
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preserve native entry points. Media3 and ML Kit otherwise provide their own
+# consumer rules; blanket keep/dontwarn directives would hide real release bugs.
+-keep class androidx.media3.common.util.LibraryLoader { *; }
+-keepclassmembers class androidx.media3.** {
+    native <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Compose stability annotations may be inspected by generated code.
+-keepclassmembers class com.oxigenplayer.app.** {
+    @androidx.compose.runtime.Immutable *;
+    @androidx.compose.runtime.Stable *;
+}
+
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# NextLib and ML Kit package their own consumer ProGuard rules. Do not add blanket
+# `-dontwarn` directives here: unresolved classes in an optional flavor must remain
+# visible during the minified release build instead of being silently hidden.
+
+# ML Kit discovers its components by instantiating the registrars named in the manifest
+# through reflection. The libraries' consumer rules keep the class names only; in R8 full
+# mode that no longer keeps the no-argument constructor, so every registrar failed with
+# "Could not instantiate" and the first ML Kit client (language identification) crashed the
+# release build at launch with a NullPointerException.
+-keep class * implements com.google.firebase.components.ComponentRegistrar {
+    <init>();
+}
